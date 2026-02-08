@@ -138,7 +138,9 @@ func uploadToSSMParameterStore(ctx context.Context, client *cloud.Client, domain
 	log.Info("Starting to upload certificate into AWS SSM Parameter Store")
 
 	// Store as individual parameters for easier retrieval in K8s
-	basePath := fmt.Sprintf("/%s", domainName)
+	// Replace invalid characters (* and .) with dashes for SSM parameter names
+	sanitizedDomain := strings.ReplaceAll(strings.ReplaceAll(domainName, "*", "wildcard"), ".", "-")
+	basePath := fmt.Sprintf("/letsencrypt/%s", sanitizedDomain)
 
 	parameters := map[string]string{
 		basePath + "/certificate":        string(tlsCertificates.Certificate),
