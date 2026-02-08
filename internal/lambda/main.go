@@ -19,6 +19,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	secretsManagerTypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmTypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
 func getCertificateByDomainFromSlice(domain string, certificates *acm.ListCertificatesOutput) (acmTypes.CertificateSummary, error) {
@@ -132,6 +134,41 @@ func uploadToSecretManager(ctx context.Context, client *cloud.Client, domainName
 	return nil
 }
 
+func uploadToSSMParameterStore(ctx context.Context, client *cloud.Client, domainName string, tlsCertificates *certificate.Resource) error {
+	log.Info("Starting to upload certificate into AWS SSM Parameter Store")
+
+	// Store as individual parameters for easier retrieval in K8s
+	basePath := fmt.Sprintf("/%s", domainName)
+
+	parameters := map[string]string{
+		basePath + "/certificate":        string(tlsCertificates.Certificate),
+		basePath + "/private-key":        string(tlsCertificates.PrivateKey),
+		basePath + "/issuer-certificate": string(tlsCertificates.IssuerCertificate),
+		basePath + "/csr":                string(tlsCertificates.CSR),
+	}
+
+	for paramName, paramValue := range parameters {
+		// Use SecureString type for encryption at rest
+		paramType := ssmTypes.ParameterTypeSecureString
+		overwrite := true
+
+		_, err := client.SSMClient.PutParameter(ctx, &ssm.PutParameterInput{
+			Name:      aws.String(paramName),
+			Value:     aws.String(paramValue),
+			Type:      paramType,
+			Overwrite: &overwrite,
+			Tier:      ssmTypes.ParameterTierStandard, // Standard tier (free)
+		})
+		if err != nil {
+			return fmt.Errorf("failed to put SSM parameter %s: %w", paramName, err)
+		}
+		log.Infof("SSM parameter updated: %s", paramName)
+	}
+
+	log.Info("Certificate successfully uploaded to SSM Parameter Store")
+	return nil
+}
+
 func processCertificate(ctx context.Context, config config.Config, client *cloud.Client, certificate acmTypes.CertificateSummary) error {
 	tags, err := client.ACMClient.ListTagsForCertificate(
 		ctx,
@@ -190,7 +227,15 @@ func processCertificate(ctx context.Context, config config.Config, client *cloud
 				return err
 			}
 		} else {
-			log.Warnf("StoreCertInSecretsManager is %v; Upload to Secrets Manages has been skipped.", config.StoreCertInSecretsManager.Bool)
+			log.Warnf("StoreCertInSecretsManager is %v; Upload to Secrets Manager has been skipped.", config.StoreCertInSecretsManager.Bool)
+		}
+
+		if config.StoreCertInSSM.Bool {
+			if err := uploadToSSMParameterStore(ctx, client, config.DomainName, tlsCertificates); err != nil {
+				return err
+			}
+		} else {
+			log.Warnf("StoreCertInSSM is %v; Upload to SSM Parameter Store has been skipped.", config.StoreCertInSSM.Bool)
 		}
 	} else {
 		log.Infof("No re-import needed. It has to be done 10 days before expiration")
@@ -200,7 +245,7 @@ func processCertificate(ctx context.Context, config config.Config, client *cloud
 }
 
 func Execute(ctx context.Context, config config.Config) error {
-	client, err := cloud.New(ctx, config.ACMRegion, config.Route53Region, config.SecretsManagerRegion)
+	client, err := cloud.New(ctx, config.ACMRegion, config.Route53Region, config.SecretsManagerRegion, config.SSMRegion)
 	if err != nil {
 		return fmt.Errorf("could not create AWS client. Error: %w", err)
 	}

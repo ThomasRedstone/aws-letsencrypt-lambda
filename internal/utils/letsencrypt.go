@@ -6,15 +6,17 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
-	"github.com/go-acme/lego/providers/dns/route53"
-	"github.com/kvendingoldo/aws-letsencrypt-lambda/internal/config"
-	log "github.com/sirupsen/logrus"
+	"os"
 	"time"
 
+	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
+	"github.com/go-acme/lego/v4/providers/dns/route53"
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/registration"
+	"github.com/kvendingoldo/aws-letsencrypt-lambda/internal/config"
+	log "github.com/sirupsen/logrus"
 )
 
 type user struct {
@@ -57,17 +59,36 @@ func GetCertificates(config config.Config, domainName string) (*certificate.Reso
 		log.Fatal(err)
 	}
 
-	// NOTE: Set up route53 dns-01 challenge provider
-	route53Config := route53.NewDefaultConfig()
-	//nolint:mnd
-	route53Config.PropagationTimeout = time.Second * 300
-	route53Provider, err := route53.NewDNSProviderConfig(route53Config)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = acmeClient.Challenge.SetDNS01Provider(route53Provider)
-	if err != nil {
-		log.Fatal(err)
+	// NOTE: Set up DNS-01 challenge provider (Route53 or CloudFlare)
+	if config.DNSProvider == "cloudflare" {
+		log.Info("Using CloudFlare DNS provider")
+		// Set CloudFlare API token in environment for Lego
+		os.Setenv("CLOUDFLARE_DNS_API_TOKEN", config.CloudFlareAPIToken)
+		
+		cloudflareConfig := cloudflare.NewDefaultConfig()
+		//nolint:mnd
+		cloudflareConfig.PropagationTimeout = time.Second * 300
+		cloudflareProvider, err := cloudflare.NewDNSProviderConfig(cloudflareConfig)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = acmeClient.Challenge.SetDNS01Provider(cloudflareProvider)
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Info("Using Route53 DNS provider")
+		route53Config := route53.NewDefaultConfig()
+		//nolint:mnd
+		route53Config.PropagationTimeout = time.Second * 300
+		route53Provider, err := route53.NewDNSProviderConfig(route53Config)
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = acmeClient.Challenge.SetDNS01Provider(route53Provider)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	// NOTE: New users will need to register

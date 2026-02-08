@@ -17,6 +17,7 @@ type Config struct {
 	ACMRegion            string
 	Route53Region        string
 	SecretsManagerRegion string
+	SSMRegion            string
 
 	DomainName                string
 	ReImportThreshold         int64
@@ -24,6 +25,11 @@ type Config struct {
 	AcmeURL                   string
 	IssueType                 string
 	StoreCertInSecretsManager null.Bool
+	StoreCertInSSM            null.Bool
+	
+	// DNS Provider config
+	DNSProvider        string // "route53" or "cloudflare"
+	CloudFlareAPIToken string
 }
 
 //nolint:unparam
@@ -191,6 +197,36 @@ func New(eventRaw interface{}) (*Config, error) {
 	if !config.StoreCertInSecretsManager.Valid {
 		log.Warn("storeCertInSecretsManager is not specified in configuration; Certificate won't be stored in AWS Secrets manager.")
 		config.StoreCertInSecretsManager = null.NewBool(false, true)
+	}
+
+	// Process StoreCertInSSM
+	if storeCertInSSM := getEnv("STORE_CERT_IN_SSM", ""); storeCertInSSM != "" {
+		storeCertInSSMValue, err := strconv.ParseBool(storeCertInSSM)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse 'STORE_CERT_IN_SSM' variable. Error: %w", err)
+		}
+
+		config.StoreCertInSSM = null.NewBool(storeCertInSSMValue, true)
+	} else {
+		log.Warn("Environment variable 'STORE_CERT_IN_SSM' is empty")
+	}
+	if !config.StoreCertInSSM.Valid {
+		log.Warn("storeCertInSSM is not specified in configuration; Certificate won't be stored in SSM Parameter Store.")
+		config.StoreCertInSSM = null.NewBool(false, true)
+	}
+
+	// Process DNSProvider
+	config.DNSProvider = getEnv("DNS_PROVIDER", "route53")
+	if config.DNSProvider != "route53" && config.DNSProvider != "cloudflare" {
+		return nil, fmt.Errorf("DNS_PROVIDER must be 'route53' or 'cloudflare', got: %s", config.DNSProvider)
+	}
+
+	// Process CloudFlare API Token (only if using CloudFlare)
+	if config.DNSProvider == "cloudflare" {
+		config.CloudFlareAPIToken = getEnv("CLOUDFLARE_DNS_API_TOKEN", "")
+		if config.CloudFlareAPIToken == "" {
+			return nil, errors.New("CLOUDFLARE_DNS_API_TOKEN is required when DNS_PROVIDER is 'cloudflare'")
+		}
 	}
 
 	log.Debugf("The full configuration: %+v", config)
