@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"fmt"
 	"os"
 	"time"
 
@@ -62,15 +61,19 @@ func GetCertificates(config config.Config, domainName string) (*certificate.Reso
 	// NOTE: Set up DNS-01 challenge provider (Route53 or CloudFlare)
 	if config.DNSProvider == "cloudflare" {
 		log.Info("Using CloudFlare DNS provider")
-		// Set CloudFlare API token in environment for Lego
+		// Set CloudFlare API token in environment for Lego v4
+		// NewDNSProvider() reads CLOUDFLARE_DNS_API_TOKEN from environment
 		os.Setenv("CLOUDFLARE_DNS_API_TOKEN", config.CloudFlareAPIToken)
+		os.Setenv("CLOUDFLARE_PROPAGATION_TIMEOUT", "300")
 		
-		cloudflareConfig := cloudflare.NewDefaultConfig()
-		//nolint:mnd
-		cloudflareConfig.PropagationTimeout = time.Second * 300
-		cloudflareProvider, err := cloudflare.NewDNSProviderConfig(cloudflareConfig)
+		// Debug: verify environment variable
+		token := os.Getenv("CLOUDFLARE_DNS_API_TOKEN")
+		log.Infof("CloudFlare token set in environment (length: %d)", len(token))
+		
+		// Use NewDNSProvider() which reads from environment
+		cloudflareProvider, err := cloudflare.NewDNSProvider()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("Failed to create CloudFlare provider: %v", err)
 		}
 		err = acmeClient.Challenge.SetDNS01Provider(cloudflareProvider)
 		if err != nil {
@@ -99,11 +102,8 @@ func GetCertificates(config config.Config, domainName string) (*certificate.Reso
 	acmeUser.Registration = reg
 
 	request := certificate.ObtainRequest{
-		Domains: []string{
-			domainName,
-			fmt.Sprintf("www.%v", domainName),
-		},
-		Bundle: true,
+		Domains: []string{domainName},
+		Bundle:  true,
 	}
 
 	// NOTE: Each cert comes back with the cert bytes, the bytes of the client's private key, and a certificate URL
