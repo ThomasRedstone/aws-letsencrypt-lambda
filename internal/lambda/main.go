@@ -147,7 +147,11 @@ func uploadToSSMParameterStore(ctx context.Context, client *cloud.Client, domain
 		basePath + "/certificate":        string(tlsCertificates.Certificate),
 		basePath + "/private-key":        string(tlsCertificates.PrivateKey),
 		basePath + "/issuer-certificate": string(tlsCertificates.IssuerCertificate),
-		basePath + "/csr":                string(tlsCertificates.CSR),
+	}
+
+	// Only add CSR if it's not empty
+	if len(tlsCertificates.CSR) > 0 {
+		parameters[basePath+"/csr"] = string(tlsCertificates.CSR)
 	}
 
 	for paramName, paramValue := range parameters {
